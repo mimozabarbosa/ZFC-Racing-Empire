@@ -21,6 +21,12 @@ style.textContent=`
 .home-dialog-head{display:flex;justify-content:space-between;align-items:center;padding:18px 20px;border-bottom:1px solid #39424a}.home-dialog-content{display:grid;gap:14px;padding:20px}.home-dialog-content label,.empire-create label{display:grid;gap:6px;color:#aab4bc;font-size:12px}.home-dialog-content input,.empire-create input{width:100%}.home-dialog-actions{display:flex;gap:8px}.home-dialog-actions button{flex:1}.auth-warning{padding:10px;border-left:3px solid #e3263a;background:#e3263a12;color:#d9c7c9;font-size:12px}
 .empire-create{width:min(940px,calc(100vw - 24px));max-height:94vh;padding:0;border:1px solid #535d65;background:#171c21;color:#eef1f3;overflow:auto}
 .empire-create form{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:0}.empire-create-head{grid-column:1/-1;padding:20px 24px;border-bottom:1px solid #39424a}.empire-create-fields{padding:24px;display:grid;align-content:start;gap:16px}.empire-create-car{padding:18px;border-left:1px solid #39424a;background:#13181d}.empire-create-car canvas{display:block;width:100%;height:220px;touch-action:none}.empire-create-actions{grid-column:1/-1;display:flex;justify-content:flex-end;gap:8px;padding:16px 24px;border-top:1px solid #39424a}
+.empire-launch{position:fixed;inset:0;z-index:12000;display:grid;place-items:center;overflow:hidden;background:radial-gradient(ellipse at center,#293139 0,#13181d 58%,#090b0e 100%);opacity:0;transition:opacity .45s ease}
+.empire-launch.visible{opacity:1}.empire-launch-inner{position:relative;width:min(760px,88vw);text-align:center;transform:translateY(24px);opacity:0;transition:transform .7s cubic-bezier(.2,.7,.2,1),opacity .5s ease}.empire-launch.visible .empire-launch-inner{transform:translateY(0);opacity:1}
+.empire-launch-kicker{color:#d9e0e4;font-size:11px;font-weight:800;letter-spacing:3px}.empire-launch-name{margin:18px 0 24px;color:#f3f5f6;font-size:clamp(28px,6vw,66px);line-height:1.04;letter-spacing:0;overflow-wrap:anywhere}
+.empire-launch-livery{display:flex;width:min(460px,75vw);height:12px;margin:0 auto;overflow:hidden;transform:skewX(-22deg)}.empire-launch-livery-primary,.empire-launch-livery-accent{width:50%;transform:scaleX(0);transform-origin:left center}.empire-launch.visible .empire-launch-livery-primary{background:var(--launch-primary);animation:livery-reveal .9s .35s ease-out forwards}.empire-launch.visible .empire-launch-livery-accent{background:var(--launch-accent);animation:livery-reveal .9s .75s ease-out forwards}
+.empire-launch-subtitle{margin-top:22px;color:#aab4bc;font-size:12px;letter-spacing:2px;text-transform:uppercase}
+@keyframes livery-reveal{to{transform:scaleX(1)}}
 .music-frame{position:fixed;width:1px;height:1px;opacity:.001;pointer-events:none;left:-2px;bottom:0;border:0}
 .music-volume{display:flex;align-items:center;gap:5px;color:#cbd3d8;font-size:11px;white-space:nowrap}.music-volume input{width:82px;padding:0;accent-color:#e3263a}
 @media(max-width:850px){.home-wrap{padding:16px}.home-masthead{min-height:330px;padding:25px}.home-grid{grid-template-columns:1fr}.home-section{border-right:0;border-bottom:1px solid #39424a;padding:22px 6px}.empire-create form{grid-template-columns:1fr}.empire-create-car{border-left:0;border-top:1px solid #39424a}.account-tools{margin-left:0}}
@@ -204,12 +210,25 @@ async function submitAuth(event){
 
 function submitEmpire(event){
   event.preventDefault();
-    const name=document.querySelector('#newEmpireName').value.trim(),primary=document.querySelector('#newEmpirePrimary').value,secondary=document.querySelector('#newEmpireAccent').value;
+  const name=document.querySelector('#newEmpireName').value.trim(),primary=document.querySelector('#newEmpirePrimary').value,secondary=document.querySelector('#newEmpireAccent').value;
   if(name.length<2||name.length>40){document.querySelector('#empireStatus').textContent='Der Unternehmensname muss 2 bis 40 Zeichen haben.';return;}
-  makeFreshEmpire(name,primary,secondary);
+  const dialog=document.querySelector('#empireDialog');
+  dialog.close();
+  try{makeFreshEmpire(name,primary,secondary);}
+  catch(error){document.querySelector('#empireStatus').textContent=error.message;dialog.showModal();return;}
   if(currentUser&&client)client.auth.updateUser({data:{company_name:name}}).then(({error})=>{if(error)console.error('Profilname konnte nicht aktualisiert werden:',error.message);});
-  document.querySelector('#empireDialog').close();
-  goToPage('overview');
+  showEmpireLaunch(name,primary,secondary);
+}
+
+function showEmpireLaunch(name,primary,secondary){
+  document.querySelector('.empire-launch')?.remove();
+  const overlay=document.createElement('section');overlay.className='empire-launch';
+  overlay.style.setProperty('--launch-primary',primary);overlay.style.setProperty('--launch-accent',secondary);
+  overlay.innerHTML='<div class="empire-launch-inner"><div class="empire-launch-kicker">RACING EMPIRE · TEAM CONFIRMED</div><h1 class="empire-launch-name"></h1><div class="empire-launch-livery"><span class="empire-launch-livery-primary"></span><span class="empire-launch-livery-accent"></span></div><div class="empire-launch-subtitle">Deine Saison beginnt jetzt</div></div>';
+  overlay.querySelector('.empire-launch-name').textContent=name;
+  document.body.append(overlay);
+  requestAnimationFrame(()=>overlay.classList.add('visible'));
+  setTimeout(()=>{overlay.classList.remove('visible');setTimeout(()=>overlay.remove(),500);api.setPage('overview');},4000);
 }
 
 function bindEvents(){
