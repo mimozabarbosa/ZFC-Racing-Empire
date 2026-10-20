@@ -253,7 +253,7 @@ function bindEvents(){
   document.querySelector('#empireForm').addEventListener('submit',submitEmpire);
   nav.addEventListener('click',event=>{if(!currentUser){event.preventDefault();event.stopImmediatePropagation();api.setPage('home');showLogin();}});
   document.body.addEventListener('input',event=>{if(event.target.id==='musicVolume')setMusicVolume(event.target.value);});
-  document.querySelector('#empireDialog').addEventListener('close',()=>{const canvas=document.querySelector('#newEmpireCar');if(canvas)canvas.dispatchEvent(new Event('pointercancel',{bubbles:true}));});
+  document.querySelector('#empireDialog').addEventListener('close',()=>{const canvas=document.querySelector('#newEmpireCar');if(canvas)canvas.dispatchEvent(new Event('pointercancel',{bubbles:true}));window.dispatchEvent(new Event('zfc:empire-close'));});
   api.subscribeSave(value=>scheduleCloudSave(value));
 }
 

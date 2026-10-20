@@ -5,6 +5,7 @@ const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.180.0/build/thr
 
 const api = window.ZFCEmpire;
 const main = document.querySelector('#main');
+const lowDetail=matchMedia('(pointer:coarse)').matches||(navigator.hardwareConcurrency||8)<=4||(navigator.deviceMemory||8)<=4;
 const style = document.createElement('style');
 style.textContent = `
 .garage-studio{margin-top:20px;border-top:1px solid #39424a;border-bottom:1px solid #39424a;background:#161b20}
@@ -37,6 +38,9 @@ let scene=null;
 let camera=null;
 let pointerDown=null;
 let lastFrame=0;
+let animationFrame=0;
+let resizeObserver=null;
+let pendingCanvas=null;
 let modelPaint={primary:'#e3263a',secondary:'#f0f2f3'};
 
 function paint(color,slot,roughness=0.32,metalness=0.18){
@@ -71,7 +75,7 @@ function carBody(group,bodyMaterial){
     {z:-.72,w:.56,b:.38,t:.69},{z:-.05,w:.43,b:.4,t:.62},{z:.62,w:.35,b:.43,t:.59},
     {z:1.35,w:.27,b:.46,t:.56},{z:2.25,w:.16,b:.49,t:.53},{z:2.72,w:.08,b:.5,t:.52}
   ];
-  const vertices=[],indices=[],segments=20;
+  const vertices=[],indices=[],segments=lowDetail?12:20;
   for(const section of sections){
     const center=(section.b+section.t)/2,half=(section.t-section.b)/2;
     for(let side=0;side<segments;side++){
@@ -89,15 +93,16 @@ function carBody(group,bodyMaterial){
 
 function wheel(group,x,z,radius,materials){
   const centerY=radius+.13;
-  const tire=part(group,new THREE.CylinderGeometry(radius,radius,.38,40,1),materials.tire,vec(x,centerY,z),vec(0,0,Math.PI/2));
+  const tire=part(group,new THREE.CylinderGeometry(radius,radius,.38,lowDetail?20:40,1),materials.tire,vec(x,centerY,z),vec(0,0,Math.PI/2));
   tire.castShadow=true;
   for(const side of [-1,1]){
     const faceX=x+side*.196;
-    part(group,new THREE.TorusGeometry(radius*.73,.045,8,28),materials.tread,vec(faceX,centerY,z),vec(0,Math.PI/2,0));
-    part(group,new THREE.CylinderGeometry(radius*.62,radius*.62,.014,28),materials.rim,vec(faceX+side*.012,centerY,z),vec(0,0,Math.PI/2));
-    part(group,new THREE.CylinderGeometry(radius*.17,radius*.17,.035,18),materials.hub,vec(faceX+side*.025,centerY,z),vec(0,0,Math.PI/2));
-    for(let spoke=0;spoke<8;spoke++){
-      const angle=spoke*Math.PI/4,start=vec(faceX+side*.035,centerY+Math.sin(angle)*radius*.18,z+Math.cos(angle)*radius*.18),end=vec(faceX+side*.035,centerY+Math.sin(angle)*radius*.67,z+Math.cos(angle)*radius*.67);
+    part(group,new THREE.TorusGeometry(radius*.73,.045,6,lowDetail?16:28),materials.tread,vec(faceX,centerY,z),vec(0,Math.PI/2,0));
+    part(group,new THREE.CylinderGeometry(radius*.62,radius*.62,.014,lowDetail?16:28),materials.rim,vec(faceX+side*.012,centerY,z),vec(0,0,Math.PI/2));
+    part(group,new THREE.CylinderGeometry(radius*.17,radius*.17,.035,lowDetail?12:18),materials.hub,vec(faceX+side*.025,centerY,z),vec(0,0,Math.PI/2));
+    const spokes=lowDetail?3:8;
+    for(let spoke=0;spoke<spokes;spoke++){
+      const angle=spoke*Math.PI*2/spokes,start=vec(faceX+side*.035,centerY+Math.sin(angle)*radius*.18,z+Math.cos(angle)*radius*.18),end=vec(faceX+side*.035,centerY+Math.sin(angle)*radius*.67,z+Math.cos(angle)*radius*.67);
       cylinderBetween(group,start,end,.018,materials.rim,6);
     }
   }
@@ -114,7 +119,7 @@ function wing(group,width,z,y,mainMaterial,accentMaterial,depth=.16){
 
 function curveTube(group,points,radius,material){
   const curve=new THREE.CatmullRomCurve3(points.map(point=>vec(...point)));
-  return part(group,new THREE.TubeGeometry(curve,32,radius,8,false),material,vec(0,0,0));
+  return part(group,new THREE.TubeGeometry(curve,lowDetail?16:32,radius,lowDetail?6:8,false),material,vec(0,0,0));
 }
 
 function buildFormulaCar(primary,secondary){
@@ -183,8 +188,19 @@ function applyPaint(){
 function resize(){
   if(!active||!renderer||!camera)return;
   const width=active.canvas.parentElement?.clientWidth||900,height=active.canvas.parentElement?.clientHeight||390;
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,1.7));renderer.setSize(width,height,false);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,lowDetail?1:1.5));renderer.setSize(width,height,false);
   camera.aspect=width/height;camera.updateProjectionMatrix();
+}
+
+function stopShowroom(){
+  if(animationFrame)cancelAnimationFrame(animationFrame);animationFrame=0;
+  resizeObserver?.disconnect();resizeObserver=null;
+  if(renderer){renderer.renderLists?.dispose();renderer.dispose();renderer.forceContextLoss();}
+  renderer=null;scene=null;camera=null;currentCar=null;active=null;pointerDown=null;
+}
+
+function startShowroom(){
+  if(!animationFrame)animationFrame=requestAnimationFrame(animate);
 }
 
 function fallbackPreview(canvas){
@@ -206,15 +222,15 @@ function makePanel(){
 
 function initializeModel(canvas){
   if(!THREE){canvas.classList.add('garage-fallback');fallbackPreview(canvas);return;}
-  if(active?.canvas===canvas){applyPaint();resize();return;}
+  if(active?.canvas===canvas){applyPaint();resize();startShowroom();return;}
   try{
-  if(renderer)renderer.dispose();
+  if(renderer)stopShowroom();
   scene=new THREE.Scene();scene.background=new THREE.Color('#20272d');scene.fog=new THREE.Fog('#20272d',18,38);
   camera=new THREE.PerspectiveCamera(31,1,.1,100);camera.position.set(7.8,6.7,9.7);camera.lookAt(0,.45,0);
-  renderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:false,powerPreference:'high-performance'});
-  renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
-  scene.add(new THREE.HemisphereLight('#e9edf0','#273039',2.1));
-  const key=new THREE.DirectionalLight('#fff1dd',3.2);key.position.set(-7,10,6);key.castShadow=true;key.shadow.mapSize.set(1024,1024);scene.add(key);
+  renderer=new THREE.WebGLRenderer({canvas,antialias:!lowDetail,alpha:false,powerPreference:'low-power'});
+  renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.shadowMap.enabled=!lowDetail;if(!lowDetail)renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+  scene.add(new THREE.HemisphereLight('#e9edf0','#273039',lowDetail?2.5:2.1));
+  const key=new THREE.DirectionalLight('#fff1dd',lowDetail?2.5:3.2);key.position.set(-7,10,6);key.castShadow=!lowDetail;if(!lowDetail)key.shadow.mapSize.set(512,512);scene.add(key);
   const rim=new THREE.DirectionalLight('#81b9de',2);rim.position.set(5,4,-7);scene.add(rim);
   const floor=new THREE.Mesh(new THREE.CircleGeometry(8,64),new THREE.MeshStandardMaterial({color:'#272e34',roughness:.38,metalness:.45}));floor.rotation.x=-Math.PI/2;floor.position.y=-.03;floor.receiveShadow=true;scene.add(floor);
   const ring=new THREE.Mesh(new THREE.TorusGeometry(6,.012,4,96),new THREE.MeshBasicMaterial({color:'#64717a'}));ring.rotation.x=Math.PI/2;ring.position.y=-.01;scene.add(ring);
@@ -225,33 +241,45 @@ function initializeModel(canvas){
   canvas.addEventListener('pointerup',event=>{pointerDown=null;canvas.classList.remove('is-dragging');if(canvas.hasPointerCapture(event.pointerId))canvas.releasePointerCapture(event.pointerId);});
   canvas.addEventListener('pointercancel',()=>{pointerDown=null;canvas.classList.remove('is-dragging');});
   canvas.addEventListener('wheel',event=>{event.preventDefault();camera.position.multiplyScalar(Math.exp(event.deltaY*.0008));camera.position.clampLength(7,20);camera.lookAt(0,.45,0);},{passive:false});
-  new ResizeObserver(resize).observe(canvas.parentElement);resize();applyPaint();
+  resizeObserver=new ResizeObserver(resize);resizeObserver.observe(canvas.parentElement);resize();applyPaint();startShowroom();
   }catch(error){
     console.error('Der 3D-Showroom konnte nicht gestartet werden:',error);
-    renderer?.dispose();renderer=null;active=null;currentCar=null;
+    stopShowroom();
     canvas.classList.add('garage-fallback');fallbackPreview(canvas);
   }
 }
 
 function mount(){
   const creating=document.querySelector('#empireDialog')?.open;
-  if(api.getPage()!=='settings'&&!creating)return;
+  if(api.getPage()!=='settings'&&!creating){
+    pendingCanvas=null;
+    if(active?.canvas.closest('#empireDialog'))stopShowroom();
+    return;
+  }
   const panel=creating?document.querySelector('#empireDialog'):makePanel();
   const canvas=panel?.querySelector(creating?'#newEmpireCar':'#empireCar');
   if(!canvas)return;
-  initializeModel(canvas);
   const livery=api.getTeamLivery();
   for(const input of panel.querySelectorAll(creating?'#newEmpirePrimary':'#empirePrimary'))input.value=livery.primary;
   for(const input of panel.querySelectorAll(creating?'#newEmpireAccent':'#empireAccent'))input.value=livery.secondary;
+  if(active?.canvas===canvas){initializeModel(canvas);return;}
+  if(pendingCanvas===canvas)return;
+  pendingCanvas=canvas;
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    if(pendingCanvas!==canvas)return;
+    pendingCanvas=null;
+    if(!canvas.isConnected||(creating&&!document.querySelector('#empireDialog')?.open))return;
+    initializeModel(canvas);
+  }));
 }
 
 function animate(now){
-  requestAnimationFrame(animate);
   const creating=active?.canvas.closest('#empireDialog')?.open;
-  if(!active||!renderer||(api.getPage()!=='settings'&&!creating))return;
+  if(!active||!renderer||(api.getPage()!=='settings'&&!creating)||document.visibilityState==='hidden'){animationFrame=0;return;}
   const delta=Math.min((now-lastFrame)/1000,.05);lastFrame=now;
   if(!pointerDown&&currentCar)currentCar.rotation.y+=delta*.16;
   renderer.render(scene,camera);
+  animationFrame=requestAnimationFrame(animate);
 }
 
 document.body.addEventListener('input',event=>{
@@ -273,5 +301,6 @@ document.body.addEventListener('click',event=>{
 const observer=new MutationObserver(mount);
 observer.observe(document.body,{childList:true,subtree:true});
 window.addEventListener('zfc:empire-create',mount);
+window.addEventListener('zfc:empire-close',()=>{if(active?.canvas.closest('#empireDialog'))stopShowroom();});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState!=='hidden'&&active&&(api.getPage()==='settings'||active.canvas.closest('#empireDialog')?.open))startShowroom();});
 mount();
-requestAnimationFrame(animate);
